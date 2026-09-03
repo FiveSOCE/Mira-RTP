@@ -1,0 +1,21 @@
+name: MiraRTP
+version: 0.1.0
+main: com.mira.rtp.MiraRtpPlugin
+api-version: '1.21'
+author: Mira
+softdepend: [MiraFactions, Multiverse-Core]
+commands:
+  rtp:
+    description: Randomly teleport to the configured gameplay world.
+    usage: /rtp [reload]
+    permission: mirartp.use
+permissions:
+  mirartp.use:
+    description: Allows use of /rtp.
+    default: true
+  mirartp.bypass.cooldown:
+    description: Bypasses the RTP cooldown.
+    default: op
+  mirartp.admin:
+    description: Allows /rtp reload.
+    default: op
