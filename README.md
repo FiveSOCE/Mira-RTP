@@ -1,78 +1,37 @@
 # MiraRTP
 
-Cross-world random teleport for **Paper 1.21.11 / Java 21**, built for the Mira plugin suite.
+MiraRTP is the cross-world random teleport system for the Mira Paper server suite. Players can run `/rtp` from a spawn/lobby or any other world and be safely teleported into a configured gameplay world such as the Multiverse-managed `factions` world.
 
 ## Download
 
-Current release: **v0.1.0**
-
 [**Download MiraRTP v0.1.0**](https://github.com/FiveSOCE/Mira-RTP/releases/download/v0.1.0/MiraRTP-0.1.0.jar)
 
-[View all releases](https://github.com/FiveSOCE/Mira-RTP/releases)
-
-## Purpose
-
-Players can run `/rtp` from any world, including a dedicated Multiverse spawn world, and MiraRTP will always teleport them into the configured gameplay world.
-
-Default target world: `factions`
-
-## Features
-
-- Cross-world `/rtp`
-- Configurable target world
-- Configurable minimum/maximum radius
-- Async chunk loading and teleporting
-- Safe surface detection
-- Water, lava, cactus, powder snow, magma and leaf avoidance
-- World border support
-- Configurable cooldown
-- Cooldown bypass permission
-- Optional MiraFactions integration
-- Avoids faction claims, SafeZone and WarZone by default
-- `/rtp reload` admin command
-
-## Commands
-
-- `/rtp` - Randomly teleport to the configured gameplay world
-- `/rtp reload` - Reload configuration
-
-## Permissions
-
-- `mirartp.use` - use `/rtp`
-- `mirartp.bypass.cooldown` - bypass RTP cooldown
-- `mirartp.admin` - reload configuration
-
-## Requirements
+## Requirements / Dependencies
 
 - Paper 1.21.11
 - Java 21
 - Multiverse-Core optional but recommended for multi-world server layouts
-- MiraFactions optional; when installed, wilderness protection checks are enabled
+- MiraFactions optional; when installed, RTP can reject faction claims, SafeZone and WarZone territory
 
-## Default flow
+## How MiraRTP Works
 
-```text
-Spawn world
-   ↓
-/rtp
-   ↓
-MiraRTP targets `factions`
-   ↓
-Loads candidate chunk
-   ↓
-Checks safe terrain + world border + MiraFactions territory
-   ↓
-Teleports player into unclaimed wilderness
-```
+When a player runs `/rtp`, MiraRTP resolves the configured target world, applies the configured cooldown and searches for a random X/Z position between the minimum and maximum radius. Candidate chunks are loaded asynchronously. The plugin finds a safe surface, rejects dangerous landing blocks such as water, lava, cactus, powder snow, magma and leaves according to configuration, respects the world border and retries until a valid location is found or the maximum attempt count is reached.
 
-## Build
+With MiraFactions installed, MiraRTP queries its public territory API before teleporting. By default it refuses faction-owned chunks, SafeZone and WarZone so players land in unclaimed wilderness. The final teleport is performed asynchronously and the cooldown is only applied after a successful teleport.
 
-```bash
-gradle clean build
-```
+The default target world is `factions`, making the intended flow: player starts in the spawn world, runs `/rtp`, and is transported into safe wilderness in the factions gameplay world.
 
-Output:
+## Commands
 
-```text
-build/libs/MiraRTP-0.1.0.jar
-```
+| Command | Permission | What it does |
+| --- | --- | --- |
+| `/rtp` | `mirartp.use` | Searches for a safe random location and teleports the player into the configured gameplay world. |
+| `/rtp reload` | `mirartp.admin` | Reloads MiraRTP configuration and refreshes the MiraFactions bridge. |
+
+## Permissions
+
+| Permission | Default | What it does |
+| --- | --- | --- |
+| `mirartp.use` | Everyone | Allows use of `/rtp`. |
+| `mirartp.bypass.cooldown` | OP | Bypasses the configured RTP cooldown. |
+| `mirartp.admin` | OP | Allows `/rtp reload`. |
