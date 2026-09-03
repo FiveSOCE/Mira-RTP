@@ -2,6 +2,14 @@
 
 Cross-world random teleport for **Paper 1.21.11 / Java 21**, built for the Mira plugin suite.
 
+## Download
+
+Current release: **v0.1.0**
+
+[**Download MiraRTP v0.1.0**](https://github.com/FiveSOCE/Mira-RTP/releases/download/v0.1.0/MiraRTP-0.1.0.jar)
+
+[View all releases](https://github.com/FiveSOCE/Mira-RTP/releases)
+
 ## Purpose
 
 Players can run `/rtp` from any world, including a dedicated Multiverse spawn world, and MiraRTP will always teleport them into the configured gameplay world.
