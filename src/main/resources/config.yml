@@ -23,7 +23,7 @@ world-border:
   padding: 16
 
 messages:
-  prefix: '&d&lMiraRTP &8» &r'
+  prefix: '&5&lMira &8>> &r'
   searching: '&7Searching for a safe location in &f%world%&7...'
   success: '&aTeleported to wilderness at &f%x%&7, &f%z%&a.'
   cooldown: '&cYou must wait &f%seconds%s &cbefore using RTP again.'
