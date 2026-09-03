@@ -2,7 +2,6 @@ package com.mira.rtp;
 
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
-import org.bukkit.Chunk;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
@@ -91,7 +90,7 @@ public final class MiraRtpPlugin extends JavaPlugin implements CommandExecutor, 
 
         Candidate candidate = randomCandidate(world);
         if (candidate == null) {
-            msg(player, getConfig().getString("messages.no-location", "&cCould not find a safe wilderness location. Try again."));
+            search(player, world, attempt + 1, maxAttempts, cooldownMs);
             return;
         }
 
@@ -144,11 +143,11 @@ public final class MiraRtpPlugin extends JavaPlugin implements CommandExecutor, 
 
     private Location safeLocation(World world, int x, int z) {
         int highest = world.getHighestBlockYAt(x, z);
-        if (highest <= world.getMinHeight() || highest >= world.getMaxHeight() - 2) return null;
+        if (highest < world.getMinHeight() || highest >= world.getMaxHeight() - 2) return null;
 
-        Block floor = world.getBlockAt(x, highest - 1, z);
-        Block feet = world.getBlockAt(x, highest, z);
-        Block head = world.getBlockAt(x, highest + 1, z);
+        Block floor = world.getBlockAt(x, highest, z);
+        Block feet = world.getBlockAt(x, highest + 1, z);
+        Block head = world.getBlockAt(x, highest + 2, z);
         Material material = floor.getType();
 
         if (!floor.getType().isSolid() || !feet.isPassable() || !head.isPassable()) return null;
@@ -160,7 +159,7 @@ public final class MiraRtpPlugin extends JavaPlugin implements CommandExecutor, 
         if (getConfig().getBoolean("safety.avoid-magma", true) && material == Material.MAGMA_BLOCK) return null;
         if (getConfig().getBoolean("safety.avoid-leaves", true) && material.name().endsWith("_LEAVES")) return null;
 
-        return new Location(world, x + 0.5, highest, z + 0.5, random.nextFloat() * 360.0f, 0.0f);
+        return new Location(world, x + 0.5, highest + 1.0, z + 0.5, random.nextFloat() * 360.0f, 0.0f);
     }
 
     private boolean territoryAllowed(Location location) {
