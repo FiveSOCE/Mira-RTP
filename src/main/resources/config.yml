@@ -1,0 +1,32 @@
+target-world: factions
+
+radius:
+  min: 500
+  max: 10000
+
+attempts: 40
+cooldown-seconds: 300
+
+safety:
+  avoid-water: true
+  avoid-lava: true
+  avoid-leaves: true
+  avoid-cactus: true
+  avoid-powder-snow: true
+  avoid-magma: true
+  avoid-claims: true
+  avoid-safezone: true
+  avoid-warzone: true
+
+world-border:
+  respect: true
+  padding: 16
+
+messages:
+  prefix: '&d&lMiraRTP &8» &r'
+  searching: '&7Searching for a safe location in &f%world%&7...'
+  success: '&aTeleported to wilderness at &f%x%&7, &f%z%&a.'
+  cooldown: '&cYou must wait &f%seconds%s &cbefore using RTP again.'
+  world-missing: '&cThe configured RTP world &f%world% &cis not loaded.'
+  no-location: '&cCould not find a safe wilderness location. Try again.'
+  reload: '&aMiraRTP configuration reloaded.'
