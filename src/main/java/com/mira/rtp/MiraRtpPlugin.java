@@ -26,6 +26,8 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class MiraRtpPlugin extends JavaPlugin implements CommandExecutor, TabCompleter {
+    private static final String CHAT_PREFIX = "&5&lMira &8>> &r";
+
     private final Random random = new Random();
     private final Map<UUID, Long> cooldowns = new ConcurrentHashMap<>();
     private FactionsBridge factionsBridge;
@@ -52,7 +54,7 @@ public final class MiraRtpPlugin extends JavaPlugin implements CommandExecutor, 
         }
 
         if (!(sender instanceof Player player)) {
-            sender.sendMessage("Players only.");
+            msg(sender, "&cPlayers only.");
             return true;
         }
         if (!player.hasPermission("mirartp.use")) return true;
@@ -170,8 +172,7 @@ public final class MiraRtpPlugin extends JavaPlugin implements CommandExecutor, 
     }
 
     private void msg(CommandSender sender, String message) {
-        String prefix = getConfig().getString("messages.prefix", "&d&lMiraRTP &8» &r");
-        sender.sendMessage(ChatColor.translateAlternateColorCodes('&', prefix + message));
+        sender.sendMessage(ChatColor.translateAlternateColorCodes('&', CHAT_PREFIX + message));
     }
 
     @Override
