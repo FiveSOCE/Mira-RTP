@@ -1,55 +1,101 @@
 package com.mira.rtp;
 
-import org.bukkit.Bukkit;
-import org.bukkit.ChatColor;
-import org.bukkit.Location;
-import org.bukkit.Material;
-import org.bukkit.World;
-import org.bukkit.WorldBorder;
+import com.mira.core.api.MiraCore;
+import com.mira.core.api.MiraCoreProvider;
+import com.mira.core.api.ModuleHealth;
+import com.mira.factions.api.MiraFactionsApi;
+import com.mira.rtp.api.event.RtpTeleportEvent;
+import org.bukkit.*;
 import org.bukkit.block.Block;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
 import org.bukkit.entity.Player;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.Listener;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.plugin.RegisteredServiceProvider;
+import org.bukkit.plugin.ServicePriority;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.jetbrains.annotations.NotNull;
 
-import java.lang.reflect.Method;
-import java.util.Collections;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Random;
-import java.util.UUID;
+import java.time.Duration;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ThreadLocalRandom;
 
-public final class MiraRtpPlugin extends JavaPlugin implements CommandExecutor, TabCompleter {
-    private static final String CHAT_PREFIX = "&5&lMira &8>> &r";
+public final class MiraRtpPlugin extends JavaPlugin implements CommandExecutor, TabCompleter, Listener {
+    private static final String COOLDOWN_KEY = "mirartp.use";
 
-    private final Random random = new Random();
-    private final Map<UUID, Long> cooldowns = new ConcurrentHashMap<>();
-    private FactionsBridge factionsBridge;
+    private final Set<UUID> searching = ConcurrentHashMap.newKeySet();
+    private Set<Material> blockedMaterials = Set.of();
+
+    private MiraCore core;
+    private MiraFactionsApi factions;
+    private RtpApi api;
 
     @Override
     public void onEnable() {
         saveDefaultConfig();
-        factionsBridge = new FactionsBridge(this);
-        if (getCommand("rtp") != null) {
-            getCommand("rtp").setExecutor(this);
-            getCommand("rtp").setTabCompleter(this);
+
+        core = MiraCoreProvider.require();
+        RegisteredServiceProvider<MiraFactionsApi> registration =
+                getServer().getServicesManager().getRegistration(MiraFactionsApi.class);
+        if (registration == null || registration.getProvider() == null) {
+            throw new IllegalStateException("MiraFactions API is required for MiraRTP.");
         }
-        getLogger().info("MiraRTP v" + getDescription().getVersion() + " enabled.");
+        factions = registration.getProvider();
+
+        reloadSafetyMaterials();
+
+        var rtpCommand = getCommand("rtp");
+        if (rtpCommand != null) {
+            rtpCommand.setExecutor(this);
+            rtpCommand.setTabCompleter(this);
+        }
+
+        api = new RtpApiImpl();
+        getServer().getServicesManager().register(RtpApi.class, api, this, ServicePriority.Normal);
+        core.services().register(RtpApi.class, api);
+        core.modules().register(this, "MiraRTP");
+        core.modules().setHealth(this, ModuleHealth.HEALTHY,
+                "Async safe-location search, MiraFactions wilderness filtering and Core cooldown integration ready");
+
+        getServer().getPluginManager().registerEvents(this, this);
+        getLogger().info("MiraRTP v" + getPluginMeta().getVersion() + " enabled.");
     }
 
     @Override
-    public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+    public void onDisable() {
+        searching.clear();
+        getServer().getServicesManager().unregisterAll(this);
+        if (core != null) {
+            if (api != null) core.services().unregister(RtpApi.class, api);
+            core.modules().unregister(this);
+        }
+    }
+
+    @Override
+    public boolean onCommand(@NotNull CommandSender sender, @NotNull Command command,
+                             @NotNull String label, @NotNull String[] args) {
         if (args.length > 0 && args[0].equalsIgnoreCase("reload")) {
-            if (!sender.hasPermission("mirartp.admin")) return true;
+            if (!sender.hasPermission("mirartp.admin")) {
+                msg(sender, "&cYou do not have permission.");
+                return true;
+            }
             reloadConfig();
-            factionsBridge = new FactionsBridge(this);
+            reloadSafetyMaterials();
             msg(sender, getConfig().getString("messages.reload", "&aMiraRTP configuration reloaded."));
+            return true;
+        }
+
+        if (args.length > 0 && args[0].equalsIgnoreCase("status")) {
+            if (!(sender instanceof Player player)) {
+                msg(sender, "&cPlayers only.");
+                return true;
+            }
+            sendStatus(player);
             return true;
         }
 
@@ -57,189 +103,313 @@ public final class MiraRtpPlugin extends JavaPlugin implements CommandExecutor, 
             msg(sender, "&cPlayers only.");
             return true;
         }
-        if (!player.hasPermission("mirartp.use")) return true;
 
-        long now = System.currentTimeMillis();
-        long cooldownMs = Math.max(0, getConfig().getLong("cooldown-seconds", 300)) * 1000L;
-        long ready = cooldowns.getOrDefault(player.getUniqueId(), 0L);
-        if (!player.hasPermission("mirartp.bypass.cooldown") && ready > now) {
-            long seconds = Math.max(1, (ready - now + 999L) / 1000L);
-            msg(player, getConfig().getString("messages.cooldown", "&cYou must wait &f%seconds%s &cbefore using RTP again.")
-                    .replace("%seconds%", String.valueOf(seconds)));
-            return true;
+        startRequest(player);
+        return true;
+    }
+
+    private boolean startRequest(Player player) {
+        if (!player.hasPermission("mirartp.use")) {
+            msg(player, "&cYou do not have permission.");
+            return false;
+        }
+
+        UUID playerId = player.getUniqueId();
+        if (!searching.add(playerId)) {
+            msg(player, getConfig().getString("messages.already-searching",
+                    "&eAn RTP search is already running for you."));
+            return false;
+        }
+
+        if (!player.hasPermission("mirartp.bypass.cooldown")
+                && core.cooldowns().active(playerId, COOLDOWN_KEY)) {
+            searching.remove(playerId);
+            long seconds = Math.max(1L, core.cooldowns().remaining(playerId, COOLDOWN_KEY).toSeconds());
+            msg(player, getConfig().getString("messages.cooldown",
+                            "&cYou must wait &f%seconds%s &cbefore using RTP again.")
+                    .replace("%seconds%", Long.toString(seconds)));
+            return false;
         }
 
         String worldName = getConfig().getString("target-world", "factions");
         World world = Bukkit.getWorld(worldName);
         if (world == null) {
-            msg(player, getConfig().getString("messages.world-missing", "&cThe configured RTP world &f%world% &cis not loaded.")
+            searching.remove(playerId);
+            msg(player, getConfig().getString("messages.world-missing",
+                            "&cThe configured RTP world &f%world% &cis not loaded.")
                     .replace("%world%", worldName));
-            return true;
+            return false;
         }
 
-        msg(player, getConfig().getString("messages.searching", "&7Searching for a safe location in &f%world%&7...")
+        int maxAttempts = Math.max(1, Math.min(500, getConfig().getInt("attempts", 40)));
+        msg(player, getConfig().getString("messages.searching",
+                        "&7Searching for a safe location in &f%world%&7...")
                 .replace("%world%", world.getName()));
-        search(player, world, 0, Math.max(1, getConfig().getInt("attempts", 40)), cooldownMs);
+
+        search(playerId, world.getUID(), 0, maxAttempts);
         return true;
     }
 
-    private void search(Player player, World world, int attempt, int maxAttempts, long cooldownMs) {
-        if (!player.isOnline()) return;
+    private void search(UUID playerId, UUID worldId, int attempt, int maxAttempts) {
+        Player player = Bukkit.getPlayer(playerId);
+        World world = Bukkit.getWorld(worldId);
+
+        if (player == null || !player.isOnline() || world == null) {
+            searching.remove(playerId);
+            return;
+        }
+
         if (attempt >= maxAttempts) {
-            msg(player, getConfig().getString("messages.no-location", "&cCould not find a safe wilderness location. Try again."));
+            searching.remove(playerId);
+            msg(player, getConfig().getString("messages.no-location",
+                    "&cCould not find a safe wilderness location. Try again."));
             return;
         }
 
         Candidate candidate = randomCandidate(world);
         if (candidate == null) {
-            search(player, world, attempt + 1, maxAttempts, cooldownMs);
+            search(playerId, worldId, attempt + 1, maxAttempts);
             return;
         }
 
-        world.getChunkAtAsync(candidate.x >> 4, candidate.z >> 4, true).whenComplete((chunk, throwable) ->
-                Bukkit.getScheduler().runTask(this, () -> {
-                    if (throwable != null || chunk == null || !player.isOnline()) {
-                        search(player, world, attempt + 1, maxAttempts, cooldownMs);
+        world.getChunkAtAsync(candidate.x() >> 4, candidate.z() >> 4, true)
+                .whenComplete((chunk, throwable) -> Bukkit.getScheduler().runTask(this, () -> {
+                    Player current = Bukkit.getPlayer(playerId);
+                    World currentWorld = Bukkit.getWorld(worldId);
+                    if (current == null || !current.isOnline() || currentWorld == null) {
+                        searching.remove(playerId);
                         return;
                     }
-                    Location safe = safeLocation(world, candidate.x, candidate.z);
+                    if (throwable != null || chunk == null) {
+                        search(playerId, worldId, attempt + 1, maxAttempts);
+                        return;
+                    }
+
+                    Location safe = safeLocation(currentWorld, candidate.x(), candidate.z());
                     if (safe == null || !territoryAllowed(safe)) {
-                        search(player, world, attempt + 1, maxAttempts, cooldownMs);
+                        search(playerId, worldId, attempt + 1, maxAttempts);
                         return;
                     }
-                    player.teleportAsync(safe).whenComplete((success, teleportError) -> Bukkit.getScheduler().runTask(this, () -> {
-                        if (Boolean.TRUE.equals(success) && teleportError == null) {
-                            if (!player.hasPermission("mirartp.bypass.cooldown") && cooldownMs > 0) {
-                                cooldowns.put(player.getUniqueId(), System.currentTimeMillis() + cooldownMs);
-                            }
-                            msg(player, getConfig().getString("messages.success", "&aTeleported to wilderness at &f%x%&7, &f%z%&a.")
-                                    .replace("%x%", String.valueOf(safe.getBlockX()))
-                                    .replace("%z%", String.valueOf(safe.getBlockZ())));
-                        } else {
-                            search(player, world, attempt + 1, maxAttempts, cooldownMs);
-                        }
-                    }));
+
+                    current.teleportAsync(safe).whenComplete((success, teleportError) ->
+                            Bukkit.getScheduler().runTask(this, () -> {
+                                Player online = Bukkit.getPlayer(playerId);
+                                if (online == null || !online.isOnline()) {
+                                    searching.remove(playerId);
+                                    return;
+                                }
+
+                                if (!Boolean.TRUE.equals(success) || teleportError != null) {
+                                    search(playerId, worldId, attempt + 1, maxAttempts);
+                                    return;
+                                }
+
+                                searching.remove(playerId);
+
+                                long cooldownSeconds = Math.max(0L,
+                                        getConfig().getLong("cooldown-seconds", 300L));
+                                if (!online.hasPermission("mirartp.bypass.cooldown") && cooldownSeconds > 0L) {
+                                    core.cooldowns().start(playerId, COOLDOWN_KEY,
+                                            Duration.ofSeconds(cooldownSeconds));
+                                }
+
+                                Bukkit.getPluginManager().callEvent(
+                                        new RtpTeleportEvent(online, safe.clone(), attempt + 1));
+
+                                if (getConfig().getBoolean("audit.successful-teleports", true)) {
+                                    core.audit().record("MiraRTP", "RTP_TELEPORT",
+                                            playerId, online.getName(), playerId.toString(),
+                                            "Random teleport completed",
+                                            Map.of(
+                                                    "world", safe.getWorld().getName(),
+                                                    "x", Integer.toString(safe.getBlockX()),
+                                                    "y", Integer.toString(safe.getBlockY()),
+                                                    "z", Integer.toString(safe.getBlockZ()),
+                                                    "attempts", Integer.toString(attempt + 1)
+                                            ));
+                                }
+
+                                msg(online, getConfig().getString("messages.success",
+                                                "&aTeleported to wilderness at &f%x%&7, &f%z%&a.")
+                                        .replace("%x%", Integer.toString(safe.getBlockX()))
+                                        .replace("%z%", Integer.toString(safe.getBlockZ())));
+                            }));
                 }));
     }
 
     private Candidate randomCandidate(World world) {
         int min = Math.max(0, getConfig().getInt("radius.min", 500));
         int max = Math.max(min + 1, getConfig().getInt("radius.max", 10000));
-        double angle = random.nextDouble() * Math.PI * 2.0;
-        double radius = Math.sqrt(random.nextDouble() * (max * (double) max - min * (double) min) + min * (double) min);
-        int x = (int) Math.round(Math.cos(angle) * radius);
-        int z = (int) Math.round(Math.sin(angle) * radius);
+
+        Location center = resolveCenter(world);
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        double angle = random.nextDouble(0D, Math.PI * 2D);
+        double radiusSquared = random.nextDouble(
+                min * (double) min,
+                max * (double) max);
+        double distance = Math.sqrt(radiusSquared);
+
+        int x = (int) Math.round(center.getX() + Math.cos(angle) * distance);
+        int z = (int) Math.round(center.getZ() + Math.sin(angle) * distance);
 
         if (getConfig().getBoolean("world-border.respect", true)) {
             WorldBorder border = world.getWorldBorder();
-            Location center = border.getCenter();
-            double half = border.getSize() / 2.0;
-            double padding = Math.max(0, getConfig().getDouble("world-border.padding", 16));
-            if (x < center.getX() - half + padding || x > center.getX() + half - padding
-                    || z < center.getZ() - half + padding || z > center.getZ() + half - padding) {
+            Location borderCenter = border.getCenter();
+            double half = border.getSize() / 2D;
+            double padding = Math.max(0D, getConfig().getDouble("world-border.padding", 16D));
+            double availableHalf = half - padding;
+            if (availableHalf <= 0D) return null;
+
+            if (x < borderCenter.getX() - availableHalf || x > borderCenter.getX() + availableHalf
+                    || z < borderCenter.getZ() - availableHalf || z > borderCenter.getZ() + availableHalf) {
                 return null;
             }
         }
+
         return new Candidate(x, z);
     }
 
+    private Location resolveCenter(World world) {
+        String mode = getConfig().getString("radius.center", "WORLD_BORDER")
+                .trim().toUpperCase(Locale.ROOT);
+
+        return switch (mode) {
+            case "WORLD_SPAWN", "SPAWN" -> world.getSpawnLocation();
+            case "CUSTOM" -> new Location(world,
+                    getConfig().getDouble("radius.custom-x", 0D),
+                    world.getSeaLevel(),
+                    getConfig().getDouble("radius.custom-z", 0D));
+            default -> world.getWorldBorder().getCenter();
+        };
+    }
+
     private Location safeLocation(World world, int x, int z) {
-        int highest = world.getHighestBlockYAt(x, z);
+        int highest = world.getHighestBlockYAt(x, z, HeightMap.MOTION_BLOCKING_NO_LEAVES);
         if (highest < world.getMinHeight() || highest >= world.getMaxHeight() - 2) return null;
 
         Block floor = world.getBlockAt(x, highest, z);
         Block feet = world.getBlockAt(x, highest + 1, z);
         Block head = world.getBlockAt(x, highest + 2, z);
-        Material material = floor.getType();
 
         if (!floor.getType().isSolid() || !feet.isPassable() || !head.isPassable()) return null;
-        if (material == Material.BEDROCK) return null;
-        if (getConfig().getBoolean("safety.avoid-water", true) && (material == Material.WATER || feet.getType() == Material.WATER)) return null;
-        if (getConfig().getBoolean("safety.avoid-lava", true) && (material == Material.LAVA || feet.getType() == Material.LAVA)) return null;
-        if (getConfig().getBoolean("safety.avoid-cactus", true) && material == Material.CACTUS) return null;
-        if (getConfig().getBoolean("safety.avoid-powder-snow", true) && material == Material.POWDER_SNOW) return null;
-        if (getConfig().getBoolean("safety.avoid-magma", true) && material == Material.MAGMA_BLOCK) return null;
-        if (getConfig().getBoolean("safety.avoid-leaves", true) && material.name().endsWith("_LEAVES")) return null;
+        if (feet.isLiquid() || head.isLiquid()) return null;
 
-        return new Location(world, x + 0.5, highest + 1.0, z + 0.5, random.nextFloat() * 360.0f, 0.0f);
+        if (blocked(floor.getType()) || blocked(feet.getType()) || blocked(head.getType())) return null;
+
+        if (getConfig().getBoolean("safety.avoid-tree-tops", true)) {
+            String floorName = floor.getType().name();
+            if (floorName.endsWith("_LOG") || floorName.endsWith("_WOOD")
+                    || floorName.endsWith("_STEM") || floorName.endsWith("_HYPHAE")) {
+                return null;
+            }
+        }
+
+        Location result = new Location(world, x + 0.5D, highest + 1D, z + 0.5D,
+                ThreadLocalRandom.current().nextFloat() * 360F, 0F);
+
+        if (!result.getWorld().getWorldBorder().isInside(result)
+                && getConfig().getBoolean("world-border.respect", true)) {
+            return null;
+        }
+
+        return result;
+    }
+
+    private boolean blocked(Material material) {
+        if (material == null) return true;
+
+        if (getConfig().getBoolean("safety.avoid-water", true) && material == Material.WATER) return true;
+        if (getConfig().getBoolean("safety.avoid-lava", true) && material == Material.LAVA) return true;
+        if (getConfig().getBoolean("safety.avoid-leaves", true) && material.name().endsWith("_LEAVES")) return true;
+        if (getConfig().getBoolean("safety.avoid-cactus", true) && material == Material.CACTUS) return true;
+        if (getConfig().getBoolean("safety.avoid-powder-snow", true) && material == Material.POWDER_SNOW) return true;
+        if (getConfig().getBoolean("safety.avoid-magma", true) && material == Material.MAGMA_BLOCK) return true;
+
+        return blockedMaterials.contains(material);
     }
 
     private boolean territoryAllowed(Location location) {
-        if (!factionsBridge.available()) return true;
-        if (getConfig().getBoolean("safety.avoid-safezone", true) && factionsBridge.isSafeZone(location)) return false;
-        if (getConfig().getBoolean("safety.avoid-warzone", true) && factionsBridge.isWarZone(location)) return false;
-        return !getConfig().getBoolean("safety.avoid-claims", true) || factionsBridge.territoryFaction(location).isEmpty();
+        if (getConfig().getBoolean("safety.avoid-safezone", true) && factions.isSafeZone(location)) return false;
+        if (getConfig().getBoolean("safety.avoid-warzone", true) && factions.isWarZone(location)) return false;
+        return !getConfig().getBoolean("safety.avoid-claims", true)
+                || factions.territoryFaction(location).isEmpty();
+    }
+
+    private void reloadSafetyMaterials() {
+        Set<Material> blocked = EnumSet.noneOf(Material.class);
+        for (String raw : getConfig().getStringList("safety.blocked-materials")) {
+            Material material = Material.matchMaterial(raw);
+            if (material == null) {
+                getLogger().warning("Ignoring unknown RTP blocked material: " + raw);
+                continue;
+            }
+            blocked.add(material);
+        }
+        blockedMaterials = Set.copyOf(blocked);
+    }
+
+    private void sendStatus(Player player) {
+        if (searching.contains(player.getUniqueId())) {
+            msg(player, "&eAn RTP search is currently running.");
+            return;
+        }
+
+        if (player.hasPermission("mirartp.bypass.cooldown")) {
+            msg(player, "&aRTP is ready. &7Cooldown bypass active.");
+            return;
+        }
+
+        if (!core.cooldowns().active(player.getUniqueId(), COOLDOWN_KEY)) {
+            msg(player, "&aRTP is ready.");
+            return;
+        }
+
+        long seconds = Math.max(1L,
+                core.cooldowns().remaining(player.getUniqueId(), COOLDOWN_KEY).toSeconds());
+        msg(player, "&eRTP cooldown remaining: &f" + seconds + "s&e.");
+    }
+
+    @EventHandler
+    public void onQuit(PlayerQuitEvent event) {
+        searching.remove(event.getPlayer().getUniqueId());
     }
 
     private void msg(CommandSender sender, String message) {
-        sender.sendMessage(ChatColor.translateAlternateColorCodes('&', CHAT_PREFIX + message));
+        core.messages().send(sender, message);
     }
 
     @Override
-    public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
-        if (args.length == 1 && sender.hasPermission("mirartp.admin") && "reload".startsWith(args[0].toLowerCase(Locale.ROOT))) {
-            return List.of("reload");
-        }
-        return Collections.emptyList();
+    public List<String> onTabComplete(@NotNull CommandSender sender, @NotNull Command command,
+                                      @NotNull String alias, @NotNull String[] args) {
+        if (args.length != 1) return List.of();
+
+        List<String> values = new ArrayList<>(List.of("status"));
+        if (sender.hasPermission("mirartp.admin")) values.add("reload");
+
+        String lower = args[0].toLowerCase(Locale.ROOT);
+        return values.stream()
+                .filter(value -> value.startsWith(lower))
+                .sorted()
+                .toList();
     }
 
-    private record Candidate(int x, int z) {}
+    public interface RtpApi {
+        boolean request(Player player);
+        boolean searching(UUID player);
+        Duration remainingCooldown(UUID player);
+    }
 
-    private static final class FactionsBridge {
-        private final JavaPlugin plugin;
-        private Object api;
-        private Method territoryFaction;
-        private Method isSafeZone;
-        private Method isWarZone;
+    private final class RtpApiImpl implements RtpApi {
+        @Override public boolean request(Player player) { return startRequest(player); }
+        @Override public boolean searching(UUID player) { return MiraRtpPlugin.this.searching.contains(player); }
 
-        private FactionsBridge(JavaPlugin plugin) {
-            this.plugin = plugin;
-            hook();
-        }
-
-        private void hook() {
-            try {
-                if (!Bukkit.getPluginManager().isPluginEnabled("MiraFactions")) return;
-                Class<?> apiClass = Class.forName("com.mira.factions.api.MiraFactionsApi");
-                @SuppressWarnings({"rawtypes", "unchecked"})
-                RegisteredServiceProvider<?> registration = Bukkit.getServicesManager().getRegistration((Class) apiClass);
-                if (registration == null) return;
-                api = registration.getProvider();
-                territoryFaction = apiClass.getMethod("territoryFaction", Location.class);
-                isSafeZone = apiClass.getMethod("isSafeZone", Location.class);
-                isWarZone = apiClass.getMethod("isWarZone", Location.class);
-                plugin.getLogger().info("Hooked MiraFactions wilderness checks.");
-            } catch (ReflectiveOperationException ex) {
-                plugin.getLogger().warning("MiraFactions detected but its public API could not be hooked: " + ex.getMessage());
-                api = null;
-            }
-        }
-
-        private boolean available() { return api != null; }
-
-        private Optional<?> territoryFaction(Location location) {
-            try {
-                Object value = territoryFaction.invoke(api, location);
-                return value instanceof Optional<?> optional ? optional : Optional.empty();
-            } catch (ReflectiveOperationException ex) {
-                return Optional.empty();
-            }
-        }
-
-        private boolean isSafeZone(Location location) {
-            return invokeBoolean(isSafeZone, location);
-        }
-
-        private boolean isWarZone(Location location) {
-            return invokeBoolean(isWarZone, location);
-        }
-
-        private boolean invokeBoolean(Method method, Location location) {
-            try {
-                return Boolean.TRUE.equals(method.invoke(api, location));
-            } catch (ReflectiveOperationException ex) {
-                return false;
-            }
+        @Override
+        public Duration remainingCooldown(UUID player) {
+            return core.cooldowns().active(player, COOLDOWN_KEY)
+                    ? core.cooldowns().remaining(player, COOLDOWN_KEY)
+                    : Duration.ZERO;
         }
     }
+
+    private record Candidate(int x, int z) { }
 }
