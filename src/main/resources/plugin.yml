@@ -1,13 +1,15 @@
 name: MiraRTP
-version: 0.1.0
+version: 0.1.1
 main: com.mira.rtp.MiraRtpPlugin
 api-version: '1.21'
-author: Mira
-softdepend: [MiraFactions, Multiverse-Core]
+author: FiveSOCE
+description: Safe async wilderness random teleport for the Mira ecosystem.
+depend: [MiraCore, MiraFactions]
+softdepend: [Multiverse-Core, MiraCosmetics]
 commands:
   rtp:
     description: Randomly teleport to the configured gameplay world.
-    usage: /rtp [reload]
+    usage: /rtp [status|reload]
     permission: mirartp.use
 permissions:
   mirartp.use:
