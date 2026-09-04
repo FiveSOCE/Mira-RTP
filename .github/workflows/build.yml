@@ -1,0 +1,45 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10'
+      - name: Build
+        run: gradle clean build --stacktrace
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: MiraRTP-0.1.1
+          path: build/libs/MiraRTP-0.1.1.jar
+          if-no-files-found: error
+
+      - name: Publish v0.1.1 release if missing
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view v0.1.1 >/dev/null 2>&1; then
+            gh release create v0.1.1 \
+              build/libs/MiraRTP-0.1.1.jar \
+              --target "${{ github.sha }}" \
+              --title "MiraRTP v0.1.1" \
+              --notes "Adds single-flight async searches, MiraCore shared cooldowns/audit/API, direct MiraFactions wilderness checks, world-border-centered candidate generation, stricter hazardous landing protection and typed teleport events while leaving teleport visuals to MiraCosmetics."
+          fi
