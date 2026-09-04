@@ -3,6 +3,10 @@ target-world: factions
 radius:
   min: 500
   max: 10000
+  # WORLD_BORDER, WORLD_SPAWN, or CUSTOM
+  center: WORLD_BORDER
+  custom-x: 0
+  custom-z: 0
 
 attempts: 40
 cooldown-seconds: 300
@@ -11,20 +15,36 @@ safety:
   avoid-water: true
   avoid-lava: true
   avoid-leaves: true
+  avoid-tree-tops: true
   avoid-cactus: true
   avoid-powder-snow: true
   avoid-magma: true
   avoid-claims: true
   avoid-safezone: true
   avoid-warzone: true
+  blocked-materials:
+    - BEDROCK
+    - FIRE
+    - SOUL_FIRE
+    - CAMPFIRE
+    - SOUL_CAMPFIRE
+    - SWEET_BERRY_BUSH
+    - WITHER_ROSE
+    - POINTED_DRIPSTONE
+    - END_PORTAL
+    - NETHER_PORTAL
 
 world-border:
   respect: true
   padding: 16
 
+audit:
+  successful-teleports: true
+
 messages:
   prefix: '&5&lMira &8>> &r'
   searching: '&7Searching for a safe location in &f%world%&7...'
+  already-searching: '&eAn RTP search is already running for you.'
   success: '&aTeleported to wilderness at &f%x%&7, &f%z%&a.'
   cooldown: '&cYou must wait &f%seconds%s &cbefore using RTP again.'
   world-missing: '&cThe configured RTP world &f%world% &cis not loaded.'
