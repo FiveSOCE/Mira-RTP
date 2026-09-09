@@ -4,7 +4,7 @@ MiraRTP is the safe asynchronous wilderness teleport system for the Mira Paper s
 
 ## Download
 
-[**Download MiraRTP v0.1.1**](https://github.com/FiveSOCE/Mira-RTP/releases/download/v0.1.1/MiraRTP-0.1.1.jar)
+[**Download MiraRTP v0.1.1**](https://github.com/FiveSOCE/Mira-RTP/releases/download/v0.1.2/MiraRTP-0.1.2.jar)
 
 [View All Releases](https://github.com/FiveSOCE/Mira-RTP/releases)
 
