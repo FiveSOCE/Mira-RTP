@@ -1,12 +1,14 @@
 # MiraRTP
 
-MiraRTP is the safe asynchronous wilderness teleport system for the Mira Paper server suite. Players can run `/rtp` from a lobby, spawn world or gameplay world and be moved into validated unclaimed wilderness in the configured target world.
-
 ## Download
 
-[**Download MiraRTP v0.1.1**](https://github.com/FiveSOCE/Mira-RTP/releases/download/v0.1.2/MiraRTP-0.1.2.jar)
+**Latest compatibility release: v0.1.2**
 
-[View All Releases](https://github.com/FiveSOCE/Mira-RTP/releases)
+[**Download MiraRTP-0.1.2.jar**](https://github.com/FiveSOCE/Mira-RTP/releases/download/v0.1.2/MiraRTP-0.1.2.jar)
+
+[View all releases](https://github.com/FiveSOCE/Mira-RTP/releases)
+
+MiraRTP is the safe asynchronous wilderness teleport system for the Mira Paper server suite. Players can run `/rtp` from a lobby, spawn world or gameplay world and be moved into validated unclaimed wilderness in the configured target world.
 
 ## Requirements / Dependencies
 
